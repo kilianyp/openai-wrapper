@@ -1,16 +1,26 @@
 version: '3'
 services:
   claude-wrapper:
-    build: .
+    build:
+      context: .
+      args:
+        # Match the in-container user to your host UID/GID so the ~/.claude
+        # bind-mount is readable/writable. Override via env or .env file.
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
     ports:
-      - "8000:8000"
+      # Host port is configurable (override via PORT env / .env file);
+      # container always listens on 8000.
+      - "${PORT:-8000}:8000"
     volumes:
-      - ~/.claude:/root/.claude
+      # Host path for Claude credentials. Default ~/.claude works for local
+      # shells; under Portainer (where compose runs as the docker daemon user,
+      # usually root) set CLAUDE_CONFIG_DIR to an absolute path you control
+      # and chown it to match UID/GID above.
+      - ${CLAUDE_CONFIG_DIR:-~/.claude}:/home/appuser/.claude
       # Optional: Mount a specific workspace directory
       # Uncomment and modify the line below to use a custom workspace
       # - ./workspace:/workspace
-    environment:
-      - PORT=8000
-      # Optional: Set Claude's working directory (defaults to isolated temp dir)
-      # Uncomment and modify the line below to set a custom working directory
-      # - CLAUDE_CWD=/workspace
+    # Optional: Set Claude's working directory (defaults to isolated temp dir)
+    # environment:
+    #   - CLAUDE_CWD=/workspace
