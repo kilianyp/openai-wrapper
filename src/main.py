@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import logging
+import re
 import secrets
 import string
 import time
@@ -82,6 +83,47 @@ logger = logging.getLogger(__name__)
 
 # Global variable to store runtime-generated API key
 runtime_api_key = None
+
+
+_JSON_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*\n?(?P<body>.*?)\n?\s*```\s*$", re.DOTALL)
+
+
+def build_json_response_instruction(response_format: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Translate OpenAI response_format into a system-prompt instruction.
+
+    Returns None when no JSON enforcement is requested. Supports the two
+    OpenAI-documented forms: {"type": "json_object"} and
+    {"type": "json_schema", "json_schema": {"name": ..., "schema": {...}}}.
+    """
+    if not response_format:
+        return None
+    rf_type = response_format.get("type")
+    if rf_type == "json_object":
+        return (
+            "You MUST respond with a single valid JSON object and nothing else. "
+            "No prose, no commentary, no markdown code fences. "
+            "Your entire response must parse as JSON."
+        )
+    if rf_type == "json_schema":
+        schema_obj = response_format.get("json_schema") or {}
+        schema = schema_obj.get("schema") or {}
+        name = schema_obj.get("name") or "Response"
+        return (
+            "You MUST respond with a single valid JSON object matching the "
+            f"following JSON Schema (named '{name}') and nothing else. "
+            "No prose, no commentary, no markdown code fences. "
+            "Your entire response must parse as JSON and conform exactly to the schema:\n\n"
+            f"{json.dumps(schema)}"
+        )
+    return None
+
+
+def strip_json_markdown_fences(content: str) -> str:
+    """Strip ```json ... ``` (or ``` ... ```) wrappers that Claude tends to add."""
+    if not content:
+        return content
+    m = _JSON_FENCE_RE.match(content)
+    return m.group("body").strip() if m else content.strip()
 
 # Best-effort cache for Anthropic's live Models API.  The static constants remain
 # the fallback so /v1/models keeps working for Claude CLI, Bedrock, Vertex, local
@@ -611,6 +653,17 @@ async def generate_streaming_response(
                 system_prompt = sampling_instructions
             logger.debug(f"Added sampling instructions: {sampling_instructions}")
 
+        # Translate OpenAI response_format → system-prompt instructions.
+        json_instruction = build_json_response_instruction(request.response_format)
+        if json_instruction:
+            system_prompt = (
+                f"{system_prompt}\n\n{json_instruction}" if system_prompt else json_instruction
+            )
+            logger.info(
+                "response_format=%s applied via system prompt (streaming)",
+                (request.response_format or {}).get("type"),
+            )
+
         # Filter content for unsupported features
         prompt = MessageAdapter.filter_content(prompt)
         if system_prompt:
@@ -873,6 +926,17 @@ async def chat_completions(
                     system_prompt = sampling_instructions
                 logger.debug(f"Added sampling instructions: {sampling_instructions}")
 
+            # Translate OpenAI response_format → system-prompt instructions.
+            json_instruction = build_json_response_instruction(request_body.response_format)
+            if json_instruction:
+                system_prompt = (
+                    f"{system_prompt}\n\n{json_instruction}" if system_prompt else json_instruction
+                )
+                logger.info(
+                    "response_format=%s applied via system prompt",
+                    (request_body.response_format or {}).get("type"),
+                )
+
             # Filter content
             prompt = MessageAdapter.filter_content(prompt)
             if system_prompt:
@@ -924,6 +988,14 @@ async def chat_completions(
 
             # Filter out tool usage and thinking blocks
             assistant_content = MessageAdapter.filter_content(raw_assistant_content)
+
+            # If JSON output was requested, strip any ```json ... ``` wrapping
+            # Claude likes to add despite being told not to.
+            if request_body.response_format and request_body.response_format.get("type") in (
+                "json_object",
+                "json_schema",
+            ):
+                assistant_content = strip_json_markdown_fences(assistant_content)
 
             # Add assistant response to session if using session mode
             if actual_session_id:

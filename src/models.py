@@ -80,6 +80,15 @@ class ChatCompletionRequest(BaseModel):
         default=False,
         description="Enable Claude Code tools (Read, Write, Bash, etc.) - disabled by default for OpenAI compatibility",
     )
+    response_format: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "OpenAI response_format. Supports {'type': 'json_object'} and "
+            "{'type': 'json_schema', 'json_schema': {...}}. Best-effort via "
+            "system-prompt injection plus markdown-fence stripping — not "
+            "constrained decoding, so malformed output is still possible."
+        ),
+    )
     stream_options: Optional[StreamOptions] = Field(
         default=None, description="Options for streaming responses"
     )

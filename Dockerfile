@@ -13,9 +13,9 @@ RUN apt-get update && apt-get install -y \
 # Create non-root user. The Claude CLI refuses to run with
 # --dangerously-skip-permissions as root, which the wrapper passes for tool use.
 RUN groupadd --gid ${GID} appuser 2>/dev/null || true \
-    && useradd --uid ${UID} --gid ${GID} --create-home --shell /bin/bash appuser \
+    && useradd --uid ${UID} --gid ${GID} --create-home --shell /bin/bash --non-unique appuser \
     && mkdir -p /home/appuser/.local/bin /home/appuser/.local/share \
-    && chown -R appuser:appuser /home/appuser/.local
+    && chown -R ${UID}:${GID} /home/appuser/.local
 
 # Install Poetry to a shared location so all users can invoke it
 ENV POETRY_HOME=/opt/poetry
@@ -25,8 +25,9 @@ RUN curl -sSL https://install.python-poetry.org | python3 -
 # Note: Claude Code CLI is bundled with claude-agent-sdk >= 0.1.8
 # No separate Node.js/npm installation required
 
-# Copy the app code
-COPY --chown=appuser:appuser . /app
+# Copy the app code (chown by numeric IDs since the host group may already exist
+# under a different name in the base image, e.g. GID 20 = dialout on Debian).
+COPY --chown=${UID}:${GID} . /app
 
 # Set working directory
 WORKDIR /app
